@@ -30,6 +30,8 @@ import org.apache.spark.ml.Pipeline;
 import org.apache.spark.ml.PipelineStage;
 import org.apache.spark.ml.classification.LogisticRegression;
 import com.flipkart.mlplatform.MLAPI;
+import org.apache.spark.sql.Row;
+
 import java.util.LinkedList;
 import java.util.List;
 
@@ -52,20 +54,68 @@ public class GenderTraining {
         System.setProperty("HADOOP_USER_NAME", "hdfs");
         SparkMLAPI mlapi = SparkMLAPI.getInstance();
 
-        String hdfsPath = args[0];
-        String fileName = args[1];
-        System.out.println(hdfsPath);
-        System.out.println(fileName);
-
-        DatasetId datasetId = new DatasetId("DS3", "1.37");
+//        String hdfsPath = args[0];
+//        String fileName = args[1];
+//        System.out.println(hdfsPath);
+//        System.out.println(fileName);
+//
+//        DatasetId datasetId = new DatasetId("DS3", "1.37");
         DatasetId datasetIdTest = new DatasetId("DS4", "1.21");
+//
+//        Model model = train(datasetId, mlapi, jsc);
+//        predLabelFile(model, datasetIdTest, mlapi, jsc, hdfsPath, fileName);
+        ModelId modelId = new ModelId("MD23177", "1.0.0");
+        com.flipkart.mlplatform.Model model = loadModel(modelId);
+        List<Input> inputs = model.getModelMetadata().getInputs();
+        ArrayList<String> input_names = new ArrayList<String>();
 
-        Model model = train(datasetId, mlapi, jsc);
-        predLabelFile(model, datasetIdTest, mlapi, jsc, hdfsPath, fileName);
 
+        for(Input input : inputs){
+            System.out.println(input.getName());
+            input_names.add(input.getName());
+        }
+        System.out.println("**************model inputs above****************");
+        for(String fn: input_names){
+            System.out.println(fn);
+        }
+        System.out.println("**************got them into list****************");
+        DataFrame testDataFrame  = getTrainingDataFrame(jsc, mlapi, datasetIdTest);
+        Row df_row = testDataFrame.take(1)[0];
+        List<String> columns = Arrays.asList(testDataFrame.columns());
+        for(String col : columns){
+            System.out.println(col + " " + columns.indexOf(col));
+        }
+        System.out.println("**************columns of df printed****************");
+
+        HashMap<String, Object> hsmp = new HashMap<>();
+
+        for(Input input: inputs){
+            int of_feature = columns.indexOf(input.getName());
+            System.out.println("of_feature");
+            System.out.println(of_feature + " " + input.getName() + " " + df_row.get(of_feature));
+            hsmp.put(input.getName(), Double.parseDouble(df_row.get(of_feature).toString()));
+        }
+        testDataFrame.show(2);
+        for(String key: hsmp.keySet()){
+            System.out.println(key + " " + hsmp.get(key));
+        }
+
+        PredictionInput pi = new PredictionInput();
+        pi.setParams(hsmp);
+
+        PredictionOutput po = model.predict(pi);
+        System.out.println(po.getResult().get("probability"));
     }
 
 
+
+
+
+
+    public static com.flipkart.mlplatform.Model loadModel(ModelId modelId) throws Exception{
+        MLAPI modelApi = MLAPI.getInstance();
+        return modelApi.loadModel(modelId);
+    }
 
 
 
@@ -111,11 +161,12 @@ public class GenderTraining {
         trainingDataFrame = trainingDataFrame.withColumn("labelTmp", trainingDataFrame.col("label").cast(DoubleType))
                 .drop("label")
                 .withColumnRenamed("labelTmp", "label");
-        trainingDataFrame.select("label").show();
+//        trainingDataFrame.select("label").show();
         return trainingDataFrame;
     }
 
     public static ModelId publishModel(MLAPI mlapi, Model model, DataFrame dataFrame) {
+        dataFrame.show();
         final byte[] serializedModel = ModelExporter.export(model, dataFrame);
         Transformer transformer = ModelImporter.importAndGetTransformer(serializedModel);
         final ModelMetaData modelMetadata = prepareModelMetaData(transformer, dataFrame);
@@ -135,6 +186,9 @@ public class GenderTraining {
 
         //Deserialize it into model sdk format
         List<Input> inputsList = gson.fromJson(jsonSerializedInputs, new TypeToken<ArrayList<Input>>(){}.getType());
+        for(Input inp: inputsList){
+            System.out.println(inp.getDatatype() + " " + inp.getName().toString() + " "+ inp.getId());
+        }
         List<Output> outputsList = new ArrayList<>();
         //cannot extract output data types from training df :(
         for(String key : transformer.getOutputKeys()) {
